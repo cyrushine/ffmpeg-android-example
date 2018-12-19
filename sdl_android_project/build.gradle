@@ -9,7 +9,7 @@ else {
 
 android {
     compileSdkVersion 26
-    buildToolsVersion "26.0.1"
+    buildToolsVersion '27.0.3'
     defaultConfig {
         if (buildAsApplication) {
             applicationId "org.libsdl.app"

@@ -214,7 +214,22 @@ static void checkJNIReady(void);
 /*******************************************************************************
                                Globals
 *******************************************************************************/
+
+/**
+ * thread local 线程本地变量，引用当前线程对应的 JNIEnv*
+ * why?
+ * java 层面创建的线程是 attached to jvm 的，具有 JNIEnv*，可以进行 jni 调用
+ * 但是 cpp 层面创建的线程（pthread_create）是没有 attached to jvm 的，没有 JNIEnv*，不能进行 jni 调用
+ * 需要 jvm->AttachCurrentThread 获取到此线程对应的 jnienv；并且在线程销毁时调用 jvm->DetachCurrentThread
+ * 相关方法：Android_JNI_SetupThread, Android_JNI_GetEnv, Android_JNI_ThreadDestroyed
+ *
+ */
 static pthread_key_t mThreadKey;
+
+/**
+ * JVM 的引用
+ * 在 JNI_OnLoad 时获取得到
+ */
 static JavaVM* mJavaVM;
 
 /* Main activity */
@@ -999,6 +1014,9 @@ SDL_bool Android_JNI_GetAccelerometerValues(float values[3])
     return retval;
 }
 
+/**
+ * 将当前线程 detach from jvm，置空 mThreadKey
+ */
 static void Android_JNI_ThreadDestroyed(void* value)
 {
     /* The thread is being destroyed, detach it from the Java VM and set the mThreadKey value to NULL as required */
@@ -1009,6 +1027,9 @@ static void Android_JNI_ThreadDestroyed(void* value)
     }
 }
 
+/**
+ * 将当前线程 attach to jvm，获取 jnienv(由 mThreadKey 引用)
+ */
 JNIEnv* Android_JNI_GetEnv(void)
 {
     /* From http://developer.android.com/guide/practices/jni.html
@@ -1044,6 +1065,9 @@ JNIEnv* Android_JNI_GetEnv(void)
     return env;
 }
 
+/**
+ * 将当前线程 attach to jvm，获取 jnienv(由 mThreadKey 引用)
+ */
 int Android_JNI_SetupThread(void)
 {
     Android_JNI_GetEnv();
