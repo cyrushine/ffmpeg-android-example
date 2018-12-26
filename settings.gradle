@@ -1,1 +1,1 @@
-include ':app', ':ffmpeglib', ':sdl_android_project', ':ffplay_android_project'
+include ':app', ':ffmpeglib', ':ffplay'
