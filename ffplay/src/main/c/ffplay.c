@@ -70,6 +70,10 @@
 #include <pthread.h>
 #include <android/log.h>
 #include <jni.h>
+#include <EGL/egl.h>
+#include <GLES3/gl3.h>
+#include <android/native_window_jni.h>
+#include <android/native_window.h>
 
 #include "ffplay.h"
 #include "libavutil/avstring.h"
@@ -4069,16 +4073,19 @@ void show_help_default(const char *opt, const char *arg)
  * 将 av log 输出到 logcat
  */
 void av_log_logcat_callback(void *avcl, int level, const char *fmt, va_list vl) {
-
+    __android_log_vprint(ANDROID_LOG_DEBUG, LOG_AV_TAG, fmt, vl);
 }
 
+
 /* Called from the main */
-int main()
+int ffplayMain(JNIEnv *env, jobject obj)
 {
     int flags;
     VideoState *is;
+    jobject surface;
 
     av_log_set_level(AV_LOG_INFO);
+    /*av_log_set_callback(av_log_logcat_callback);*/
 
     /* register all codecs, demux and protocols */
 #if CONFIG_AVDEVICE
@@ -4148,6 +4155,22 @@ int main()
         do_exit(NULL);
     }
 
+    surface = (*env)->CallObjectMethod(env, obj, jniGetSurface);
+    if (surface == NULL) {
+        LOG("can't get surface");
+        return -1;
+    }
+    ANativeWindow *window = ANativeWindow_fromSurface(env, surface);
+    if (!window) {
+        LOG("ANativeWindow_fromSurface fail");
+        return -1;
+    }
+
+    if (makeCurrent(window) != EGL_TRUE) {
+        LOG("init egl fail");
+        return -1;
+    }
+    draw(ANativeWindow_getWidth(window), ANativeWindow_getHeight(window));
     event_loop(is);
 
     /* never returns */
@@ -4174,5 +4197,5 @@ JNIEXPORT void JNICALL start(JNIEnv *env, jobject obj) {
     if (input_filename != NULL) {
         LOG("file %s", input_filename);
     }
-    main();
+    ffplayMain(env, obj);
 }

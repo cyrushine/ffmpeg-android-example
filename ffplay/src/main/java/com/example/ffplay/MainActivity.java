@@ -7,12 +7,16 @@ import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
+import android.view.Menu;
+import android.view.MenuInflater;
+import android.view.MenuItem;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 
 public class MainActivity extends AppCompatActivity {
 
     private static final int CODE_PLAY_VIDEO = 206;
+    private FFplayJNI ffplay;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -30,14 +34,19 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private void initSurfaceView() {
-        final FFplayJNI ffplay = new FFplayJNI();
+        ffplay = new FFplayJNI();
         ffplay.setFilePath("/sdcard/video.mkv");
         SurfaceView surfaceView = findViewById(R.id.surfaceView);
         surfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override
             public void surfaceCreated(SurfaceHolder surfaceHolder) {
                 ffplay.setSurface(surfaceHolder.getSurface());
-                ffplay.start();
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        ffplay.start();
+                    }
+                }).start();
             }
 
             @Override
@@ -61,5 +70,23 @@ public class MainActivity extends AppCompatActivity {
                 }
                 break;
         }
+    }
+
+    @Override
+    public boolean onCreateOptionsMenu(Menu menu) {
+        getMenuInflater().inflate(R.menu.activity_main, menu);
+        return true;
+    }
+
+    @Override
+    public boolean onOptionsItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case R.id.play:
+                if (ffplay != null) {
+                    ffplay.start();
+                }
+                break;
+        }
+        return true;
     }
 }

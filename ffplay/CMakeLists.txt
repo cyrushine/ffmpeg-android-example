@@ -70,13 +70,23 @@ find_library(
         android-lib
         android)
 
+find_library(
+        EGL
+        EGL
+)
+
+find_library(
+        GLESv3
+        GLESv3
+)
+
 add_library(
         ffplay
         SHARED
-        src/main/c/ffplay.h src/main/c/jni.c src/main/c/ffplay.c)
+        src/main/c/ffplay.h src/main/c/jni.c src/main/c/ffplay.c src/main/c/gles.c)
 
 target_link_libraries(ffplay
-        avcodec-58 avdevice-58 avfilter-7 avformat-58 avutil-56 swresample-3 swscale-5 ${log-lib} ${android-lib})
+        avcodec-58 avdevice-58 avfilter-7 avformat-58 avutil-56 swresample-3 swscale-5 ${log-lib} ${android-lib} ${EGL} ${GLESv3})
 
 
 include_directories(${FFMPEG}/include)

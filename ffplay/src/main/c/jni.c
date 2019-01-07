@@ -25,7 +25,7 @@ static JNINativeMethod jniNativeMethods[] = {
 };
 
 JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
-    JNIEnv* env = NULL;
+    JNIEnv *env;
     jint ret;
     int loop;
     jmethodID methodId = NULL;
