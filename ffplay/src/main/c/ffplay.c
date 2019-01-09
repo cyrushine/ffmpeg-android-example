@@ -4155,6 +4155,8 @@ int ffplayMain(JNIEnv *env, jobject obj)
         do_exit(NULL);
     }
 
+
+    // test
     surface = (*env)->CallObjectMethod(env, obj, jniGetSurface);
     if (surface == NULL) {
         LOG("can't get surface");
@@ -4165,14 +4167,15 @@ int ffplayMain(JNIEnv *env, jobject obj)
         LOG("ANativeWindow_fromSurface fail");
         return -1;
     }
-
-    if (makeCurrent(window) != EGL_TRUE) {
-        LOG("init egl fail");
+    GLContext *glCtx = createGLContext();
+    if (!makeCurrent(window, glCtx) ) {
+        LOG("GLContext makeCurrent fail");
         return -1;
     }
-    draw(ANativeWindow_getWidth(window), ANativeWindow_getHeight(window));
-    event_loop(is);
+    drawSimpleTexture(glCtx);
 
+
+    event_loop(is);
     /* never returns */
 
     return 0;
