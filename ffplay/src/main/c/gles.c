@@ -2,14 +2,23 @@
 #include <EGL/egl.h>
 #include <android/native_window.h>
 #include <malloc.h>
+#include "libavutil/imgutils.h"
+#include "libswscale/swscale.h"
 
 struct GLContext {
     EGLDisplay display;
     EGLContext context;
     EGLSurface surface;
-    int32_t winWidth;
-    int32_t winHeight;
+
+    int32_t nWidth;
+    int32_t nHeight;
+    ANativeWindow *nativeWindow;
+
+    // 用来绘制 native window
+    struct SwsContext *swsCtx;
+    AVFrame *frameRGBA;
 };
+typedef GLContext GLContext;
 
 GLContext* createGLContext() {
     return malloc(sizeof(GLContext));
@@ -20,8 +29,18 @@ void destoryGLContext(GLContext *ptr) {
         eglDestroySurface(ptr->display, ptr->surface);
         eglDestroyContext(ptr->display, ptr->context);
         eglTerminate(ptr->display);
+        av_frame_free(&ptr->frameRGBA);
+        sws_freeContext(ptr->swsCtx);
+        ptr = NULL;
         free(ptr);
     }
+}
+
+
+void setNativeWindow(GLContext *ptr, ANativeWindow *window) {
+    ptr->nativeWindow = window;
+    ptr->nWidth = ANativeWindow_getWidth(window);
+    ptr->nHeight = ANativeWindow_getHeight(window);
 }
 
 
@@ -53,7 +72,8 @@ static void programInfoLog(GLuint program) {
     }
 }
 
-bool makeCurrent(EGLNativeWindowType window, GLContext *ctx) {
+
+bool makeCurrent(GLContext *ctx) {
     if (ctx == NULL) {
         LOG("ctx can't be null");
         return false;
@@ -107,12 +127,10 @@ bool makeCurrent(EGLNativeWindowType window, GLContext *ctx) {
         destoryGLContext(ctx);
         return false;
     }
-    ctx->winWidth = ANativeWindow_getWidth(window);
-    ctx->winHeight = ANativeWindow_getHeight(window);
-    int32_t winFormat = ANativeWindow_getFormat(window);
-    LOG("native window, %dx%d, format:%d, nativeVisualId:%d", ctx->winWidth, ctx->winHeight, winFormat, nativeVisualId);
+    int32_t winFormat = ANativeWindow_getFormat(ctx->nativeWindow);
+    LOG("native window, %dx%d, format:%d, nativeVisualId:%d", ctx->nWidth, ctx->nHeight, winFormat, nativeVisualId);
 
-    int ret = ANativeWindow_setBuffersGeometry(window, ctx->winWidth, ctx->winHeight, nativeVisualId);
+    int ret = ANativeWindow_setBuffersGeometry(ctx->nativeWindow, ctx->nWidth, ctx->nHeight, nativeVisualId);
     if (ret) {
         LOG("ANativeWindow_setBuffersGeometry fail %d", ret);
         destoryGLContext(ctx);
@@ -120,7 +138,7 @@ bool makeCurrent(EGLNativeWindowType window, GLContext *ctx) {
     }
 
 
-    ctx->surface = eglCreateWindowSurface(ctx->display, config, window, NULL);
+    ctx->surface = eglCreateWindowSurface(ctx->display, config, ctx->nativeWindow, NULL);
     if (ctx->surface == EGL_NO_SURFACE) {
         LOG("eglCreateWindowSurface fail %d", eglGetError());
         destoryGLContext(ctx);
@@ -241,7 +259,7 @@ bool drawTriangle(GLContext *ctx) {
     }
 
 
-    glViewport(0, 0, ctx->winWidth, ctx->winHeight);
+    glViewport(0, 0, ctx->nWidth, ctx->nHeight);
     glClear(GL_COLOR_BUFFER_BIT);
     glClearColor(1.0f, 0.0f, 0.0f, 0.0f);
     glUseProgram(program);
@@ -295,7 +313,7 @@ void drawSimpleTexture(GLContext *ctx) {
         LOG("loadProgram fail");
         return;
     }
-    glViewport ( 0, 0, ctx->winWidth, ctx->winHeight );
+    glViewport ( 0, 0, ctx->nWidth, ctx->nHeight );
     glClear ( GL_COLOR_BUFFER_BIT );
     glUseProgram ( program );
 
@@ -376,4 +394,74 @@ void drawSimpleTexture(GLContext *ctx) {
     if (eglSwapBuffers(ctx->display, ctx->surface) == EGL_FALSE){
         LOG("eglSwapBuffers fail %d", eglGetError());
     }
+}
+
+
+/**
+ * 在 native render 之前的准备工作
+ */
+bool prepareNativeRender(GLContext *ctx, AVCodecContext *cc) {
+    ctx->swsCtx = sws_getContext (
+            cc->width, cc->height, cc->pix_fmt,
+            ctx->nWidth, ctx->nHeight, AV_PIX_FMT_RGBA,
+            SWS_FAST_BILINEAR, NULL, NULL, NULL
+    );
+    if (ctx->swsCtx == NULL) {
+        LOG("sws_alloc_context fail");
+        return false;
+    }
+
+    if (ANativeWindow_setBuffersGeometry(ctx->nativeWindow, ctx->nWidth, ctx->nHeight, AHARDWAREBUFFER_FORMAT_R8G8B8A8_UNORM) < 0) {
+        LOG ("ANativeWindow_setBuffersGeometry fail");
+        return false;
+    }
+
+    ctx->frameRGBA = av_frame_alloc();
+    if (ctx->frameRGBA == NULL) {
+        LOG ("av_frame_alloc fail");
+        return false;
+    }
+    ctx->frameRGBA->width = ctx->nWidth;
+    ctx->frameRGBA->height = ctx->nHeight;
+    if (av_image_alloc(ctx->frameRGBA->data, ctx->frameRGBA->linesize, ctx->frameRGBA->width, ctx->frameRGBA->height, AV_PIX_FMT_RGBA, 1) <= 0) {
+        LOG ("av_image_alloc fail");
+        return false;
+    }
+    return true;
+}
+
+
+/**
+ * 渲染到 android native window
+ */
+bool renderNativeWindow(AVFrame *frame, GLContext *ctx) {
+    ANativeWindow_Buffer window_buffer;
+
+    // scale to fmt rgba
+    sws_scale(ctx->swsCtx,
+              (uint8_t const *const *) frame->data, frame->linesize, 0, frame->height,
+              ctx->frameRGBA->data, ctx->frameRGBA->linesize);
+
+    // render to window
+    if (ANativeWindow_lock(ctx->nativeWindow, &window_buffer, NULL) != 0) {
+        LOG("lock window fail");
+        return false;
+    }
+
+    // 将 rgba frame data buffer copy to window buffer
+    // rgba frame's strike == frame width, but window buffer's strike != frame width，所以需要逐行复制 picture line
+    uint8_t *dst = (uint8_t *) window_buffer.bits;
+    int dst_strike = window_buffer.stride * 4;
+    uint8_t *src = ctx->frameRGBA->data[0];
+    int src_strike = ctx->frameRGBA->linesize[0];
+    for (int i = 0; i < ctx->frameRGBA->height; i++) {
+        memcpy(dst + i * dst_strike, src + i * src_strike, src_strike);
+    }
+
+    if (ANativeWindow_unlockAndPost(ctx->nativeWindow) != 0) {
+        LOG("post frame to window fail");
+        return false;
+    }
+
+    return true;
 }

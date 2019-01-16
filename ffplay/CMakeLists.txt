@@ -83,7 +83,9 @@ find_library(
 add_library(
         ffplay
         SHARED
-        src/main/c/ffplay.h src/main/c/jni.c src/main/c/ffplay.c src/main/c/gles.c)
+        src/main/c/ffplay.h src/main/c/jni.c src/main/c/ffplay.c src/main/c/gles.c
+        src/main/c/muxing.c
+)
 
 target_link_libraries(ffplay
         avcodec-58 avdevice-58 avfilter-7 avformat-58 avutil-56 swresample-3 swscale-5 ${log-lib} ${android-lib} ${EGL} ${GLESv3})

@@ -74,6 +74,7 @@
 #include <GLES3/gl3.h>
 #include <android/native_window_jni.h>
 #include <android/native_window.h>
+#include <math.h>
 
 #include "ffplay.h"
 #include "libavutil/avstring.h"
@@ -409,6 +410,7 @@ static AVPacket flush_pkt;                          // 把它放入队列，使�
 static AVDictionary *sws_dict;
 static AVDictionary *swr_opts;
 static AVDictionary *format_opts;
+static GLContext *glCtx = NULL;
 
 #define FF_QUIT_EVENT    (SDL_USEREVENT + 2)
 
@@ -1186,6 +1188,11 @@ static void video_image_display(VideoState *is)
         vp->uploaded = 1;
         vp->flip_v = vp->frame->linesize[0] < 0;
     }
+
+
+    // TODO
+    renderNativeWindow(vp->frame, glCtx);
+
 
     // 把 video texture 复制到 render
     /*set_sdl_yuv_conversion_mode(vp->frame);
@@ -2984,6 +2991,15 @@ static int stream_component_open(VideoState *is, int stream_index)
         is->video_st = ic->streams[stream_index];
 
         decoder_init(&is->viddec, avctx, &is->videoq, is->continue_read_thread);
+
+
+        // TODO
+        if (!prepareNativeRender(glCtx, avctx)) {
+            LOG ("prepareNativeRender fail");
+            goto out;
+        }
+
+
         if ((ret = decoder_start(&is->viddec, video_thread, is)) < 0)
             goto out;
         is->queue_attachments_req = 1;
@@ -4149,14 +4165,8 @@ int ffplayMain(JNIEnv *env, jobject obj)
         }*/
     }
 
-    is = stream_open(input_filename, file_iformat);
-    if (!is) {
-        av_log(NULL, AV_LOG_FATAL, "Failed to initialize VideoState!\n");
-        do_exit(NULL);
-    }
 
-
-    // test
+    // TODO
     surface = (*env)->CallObjectMethod(env, obj, jniGetSurface);
     if (surface == NULL) {
         LOG("can't get surface");
@@ -4167,12 +4177,15 @@ int ffplayMain(JNIEnv *env, jobject obj)
         LOG("ANativeWindow_fromSurface fail");
         return -1;
     }
-    GLContext *glCtx = createGLContext();
-    if (!makeCurrent(window, glCtx) ) {
-        LOG("GLContext makeCurrent fail");
-        return -1;
+    glCtx = createGLContext();
+    setNativeWindow(glCtx, window);
+
+
+    is = stream_open(input_filename, file_iformat);
+    if (!is) {
+        av_log(NULL, AV_LOG_FATAL, "Failed to initialize VideoState!\n");
+        do_exit(NULL);
     }
-    drawSimpleTexture(glCtx);
 
 
     event_loop(is);
