@@ -35,7 +35,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void initSurfaceView() {
         ffplay = new FFplayJNI();
-        ffplay.setFilePath("/sdcard/video.mkv");
+        ffplay.setFilePath("/sdcard/video.flv");
         SurfaceView surfaceView = findViewById(R.id.surfaceView);
         surfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
             @Override

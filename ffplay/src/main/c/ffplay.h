@@ -34,11 +34,18 @@ GLContext* createGLContext();
 void destoryGLContext(GLContext *ptr);
 void setNativeWindow(GLContext *ptr, ANativeWindow *window);
 
+
+/************************** 使用 opengl 来绘制帧 *******************************/
+
+bool initSwsScale(GLContext *ctx, AVCodecContext *cc);
+
 /**
  * 绘制前的准备：获取默认 display 的 read frame buffer & draw frame buffer 的控制权
  * it will destory context if false
  */
 bool makeCurrent(GLContext *);
+
+bool initRender(GLContext *);
 
 /**
  * 简单地绘制一个三角形
@@ -49,6 +56,8 @@ bool drawTriangle(GLContext *);
  * 绘制简单纹理的例子
  */
 void drawSimpleTexture(GLContext *);
+
+bool drawTexture(AVFrame *frame, GLContext *ctx);
 
 
 /************************** 使用 native window 来绘制帧 *******************************/

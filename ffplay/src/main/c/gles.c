@@ -9,12 +9,13 @@ struct GLContext {
     EGLDisplay display;
     EGLContext context;
     EGLSurface surface;
+    GLuint programId;
+    GLuint textureId;
 
     int32_t nWidth;
     int32_t nHeight;
     ANativeWindow *nativeWindow;
 
-    // 用来绘制 native window
     struct SwsContext *swsCtx;
     AVFrame *frameRGBA;
 };
@@ -175,7 +176,7 @@ static int loadShader(GLenum type, const char *source, GLuint *outShader) {
 
     shader = glCreateShader(type);
     if (!shader) {
-        LOG("glCreateShader fail");
+        LOG("glCreateShader fail %d", glGetError());
         return -1;
     }
 
@@ -461,6 +462,161 @@ bool renderNativeWindow(AVFrame *frame, GLContext *ctx) {
     if (ANativeWindow_unlockAndPost(ctx->nativeWindow) != 0) {
         LOG("post frame to window fail");
         return false;
+    }
+
+    return true;
+}
+
+
+bool initSwsScale(GLContext *ctx, AVCodecContext *cc) {
+    ctx->swsCtx = sws_getContext (
+            cc->width, cc->height, cc->pix_fmt,
+            ctx->nWidth, ctx->nHeight, AV_PIX_FMT_RGB24,
+            SWS_FAST_BILINEAR, NULL, NULL, NULL
+    );
+    if (ctx->swsCtx == NULL) {
+        LOG("sws_alloc_context fail");
+        return false;
+    }
+
+    ctx->frameRGBA = av_frame_alloc();
+    if (ctx->frameRGBA == NULL) {
+        LOG ("av_frame_alloc fail");
+        return false;
+    }
+    ctx->frameRGBA->width = ctx->nWidth;
+    ctx->frameRGBA->height = ctx->nHeight;
+    if (av_image_alloc(ctx->frameRGBA->data, ctx->frameRGBA->linesize, ctx->frameRGBA->width, ctx->frameRGBA->height, AV_PIX_FMT_RGB24, 1) <= 0) {
+        LOG ("av_image_alloc fail");
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * opengl api 要区分哪些是全局设置，哪些是 refresh 时需要调用的 api
+ * 一般来讲，纹理数据、顶点数据、vertex attri、uniform 等这些是每次 refresh 都需要重新配置的
+ * 而 program object、texture object 等是一次性配置的（如果每次 refresh 都重新分配这些 object，会把 gpu 内存刷爆的...）
+ */
+bool initRender(GLContext *ctx) {
+    // 准备 programId
+    static const char vShaderStr[] =
+            "#version 300 es                            \n"
+            "layout(location = 0) in vec4 a_position;   \n"
+            "layout(location = 1) in vec2 a_texCoord;   \n"
+            "out vec2 v_texCoord;                       \n"
+            "void main()                                \n"
+            "{                                          \n"
+            "   gl_Position = a_position;               \n"
+            "   v_texCoord = a_texCoord;                \n"
+            "}                                          \n";
+
+    static const char fShaderStr[] =
+            "#version 300 es                                     \n"
+            "precision mediump float;                            \n"
+            "in vec2 v_texCoord;                                 \n"
+            "layout(location = 0) out vec4 outColor;             \n"
+            "uniform sampler2D s_texture;                        \n"
+            "void main()                                         \n"
+            "{                                                   \n"
+            "  outColor = texture( s_texture, v_texCoord );      \n"
+            "}                                                   \n";
+
+    ctx->programId = loadProgram(vShaderStr, fShaderStr);
+    if (!ctx->programId) {
+        LOG("loadProgram fail");
+        return false;
+    }
+    glViewport ( 0, 0, ctx->nWidth, ctx->nHeight );
+    glClear ( GL_COLOR_BUFFER_BIT );
+    glUseProgram ( ctx->programId );
+
+    // Use tightly packed data
+    // 「UNPACK」指解包，从内容读入 opengl；「PACK」指压包，指从 opengl 读入内存
+    // 一个字节对齐，也即纹理数据是紧密地存储在一起的
+    // 这些应该是全局配置（是么？）
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1 );
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    glPixelStorei(GL_UNPACK_SKIP_PIXELS, 0);
+    glPixelStorei(GL_UNPACK_SKIP_ROWS, 0);
+
+    // Generate a texture object
+    // 可以想象一个纹理单元有很多的 field(target): GL_TEXTURE_2D（2D 纹理）, GL_TEXTURE_3D（3D 纹理）, GL_TEXTURE_CUBE_MAP（立方图）...
+    // 而对纹理的操作「glTex...」不能用于 texture object，只能是当前活动纹理单元的某个 field(target)
+    // 这里构造一个纹理对象 texture object，并绑定到当前活动纹理单元的某个 target 上；后续对这个 target 的操作就是对这个纹理对象的操作（那么这个纹理对象有什么用？目前没用到...）
+    glGenTextures ( 1, &ctx->textureId );
+    if (!ctx->textureId) {
+        LOG("glGenTextures fail %d", glGetError());
+        return false;
+    }
+
+    return true;
+}
+
+
+bool drawTexture(AVFrame *frame, GLContext *ctx) {
+
+    // scale to fmt rgba
+    sws_scale(ctx->swsCtx,
+              (uint8_t const *const *) frame->data, frame->linesize, 0, frame->height,
+              ctx->frameRGBA->data, ctx->frameRGBA->linesize);
+
+
+    // 输入顶点数据
+    GLfloat vVertices[] = { -1.0f,  1.0f, 0.0f,  // Position 0
+                            0.0f,  0.0f,        // TexCoord 0
+                            -1.0f, -1.0f, 0.0f,  // Position 1
+                            0.0f,  1.0f,        // TexCoord 1
+                            1.0f, -1.0f, 0.0f,  // Position 2
+                            1.0f,  1.0f,        // TexCoord 2
+                            1.0f,  1.0f, 0.0f,  // Position 3
+                            1.0f,  0.0f         // TexCoord 3
+    };
+
+    // Load the vertex position
+    glVertexAttribPointer ( 0, 3, GL_FLOAT,
+                            GL_FALSE, 5 * sizeof ( GLfloat ), vVertices );
+    // Load the texture coordinate
+    glVertexAttribPointer ( 1, 2, GL_FLOAT,
+                            GL_FALSE, 5 * sizeof ( GLfloat ), &vVertices[3] );
+
+    glEnableVertexAttribArray ( 0 );
+    glEnableVertexAttribArray ( 1 );
+
+    // Bind the texture
+    // 可以这么想象：opengl 有 32 个纹理单元（texture unit），专门存储纹理
+    // 这里设置当前活动的是「纹理单元 0」，那么后续对纹理的操作「glTex...」都是针对「纹理单元 0」的
+    glActiveTexture ( GL_TEXTURE0 );
+
+    // Bind the texture object
+    glBindTexture ( GL_TEXTURE_2D, ctx->textureId );
+
+    // Set the filtering mode
+    glTexParameteri ( GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+    glTexParameteri ( GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+
+
+    // Set the sampler texture unit to 0
+    // 还记得上面设置的活动纹理单元是「0」么？（而且把 2D 纹理数据上传到它的 GL_TEXTURE_2D 上了）
+    // 这里设置全局只读 2D 取样器指向第「0」个纹理单元（你会发现这样的「设值」是很抽象的（0 竟然表示纹理单元 0），但有可以理解（取样器需要的是纹理单元而不是数值 0））
+    GLint textureLoction = glGetUniformLocation ( ctx->programId, "s_texture" );
+    glUniform1i ( textureLoction, 0 );
+
+
+    // Load the texture
+    // 上传纹理数据，这个是上传到当前活动纹理单元的某个 target 上
+    glTexImage2D ( GL_TEXTURE_2D, 0, GL_RGB, ctx->frameRGBA->width, ctx->frameRGBA->height, 0, GL_RGB, GL_UNSIGNED_BYTE, ctx->frameRGBA->data[0] );
+
+
+    // 绘制两个三角形，形成矩形
+    GLushort indices[] = { 0, 1, 2, 0, 2, 3 };
+    glDrawElements ( GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, indices );
+
+
+    // 输出到屏幕
+    if (eglSwapBuffers(ctx->display, ctx->surface) == EGL_FALSE){
+        LOG("eglSwapBuffers fail %d", eglGetError());
     }
 
     return true;

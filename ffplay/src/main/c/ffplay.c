@@ -1191,7 +1191,7 @@ static void video_image_display(VideoState *is)
 
 
     // TODO
-    renderNativeWindow(vp->frame, glCtx);
+    drawTexture(vp->frame, glCtx);
 
 
     // 把 video texture 复制到 render
@@ -2994,8 +2994,8 @@ static int stream_component_open(VideoState *is, int stream_index)
 
 
         // TODO
-        if (!prepareNativeRender(glCtx, avctx)) {
-            LOG ("prepareNativeRender fail");
+        if (!initSwsScale(glCtx, avctx)) {
+            LOG ("initSwsScale fail");
             goto out;
         }
 
@@ -4179,6 +4179,16 @@ int ffplayMain(JNIEnv *env, jobject obj)
     }
     glCtx = createGLContext();
     setNativeWindow(glCtx, window);
+    if (!makeCurrent(glCtx)) {
+        LOG ("makeCurrent fail");
+        destoryGLContext(glCtx);
+        return -1;
+    }
+    if (!initRender(glCtx)) {
+        LOG("initRender fail");
+        destoryGLContext(glCtx);
+        return -1;
+    }
 
 
     is = stream_open(input_filename, file_iformat);
